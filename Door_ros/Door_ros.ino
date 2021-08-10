@@ -1,6 +1,6 @@
 // Include the necessary libraries
-#include "math.h" //Includes math library
-#include <AS5047P.h> //Includes libray for the rotary encoder
+#include "math.h" 
+#include <AS5047P.h> //Library for the rotary encoder
 #include <ros.h>
 #include <std_srvs/Int32.h>
 #include <infrastructure_srvs/UInt8.h>
@@ -48,7 +48,7 @@ ros::NodeHandle n;
 infrastructure_msgs::Door data;
 ros::Publisher datapub("door_data", &data);
 
-//ros callback functions for data_start and reset_start topics 
+//ros callback functions for reset_door and start_door services
 void reset_door_callback(const std_srvs::Empty::Request& req, const std_srvs::Empty::Response& res){
   Reset_Door();
   res.response = true;
@@ -58,6 +58,7 @@ void start_door_callback(const infrastructure_srvs::UInt8::Request& req, const i
     Enable_Relays(req.data); // changes electromagnets based on input
     res.response = true;
 }
+
 
 void setup() {
   Serial.begin(57600);

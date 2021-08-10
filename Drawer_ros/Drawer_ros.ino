@@ -1,7 +1,6 @@
 //necessary libraries
 #include <AccelStepper.h>
-#include <MultiStepper.h>
-#include "Adafruit_VL53L0X.h"
+#include "Adafruit_VL53L0X.h" //TOF sensor library
 #include <ros.h>
 #include <std_msgs/Int32.h>
 #include <infrastructure_msgs/DoorSensors.h>
@@ -28,9 +27,11 @@
 #define fsr_11 A10
 #define fsr_12 A11
 
+//Init the stepper motors
 AccelStepper reset_motor(1, pulse_reset, direction_reset);
 AccelStepper friction_motor(1, pulse_friction, direction_friction);
 
+//Init tof sensor
 Adafruit_VL53L0X tof = Adafruit_VL53L0X();
 
 int start_pos; //distance of drawer from tof in starting pos, the '0' position.
@@ -44,6 +45,7 @@ float force_input; //input from user to set resistance rating
 const int time_unwind = 4000; //in ms
 unsigned long time;
 unsigned long time_stop;
+
 //ros variables
 ros::NodeHandle n;
 infrastructure_msgs::Drawer data;
@@ -51,9 +53,10 @@ ros::Publisher datapub("door_data", &data);
 
 //ros callback functions for start_drawer and reset_drawer services
 void reset_drawer_callback(const std_msgs::Int32& req){
-  reset_drawer(start_pos);
+  reset_drawer();
   res.data = true;
 }
+
 void start_drawer_callback(const infrastructure_msgs::UInt8_srv::Request& req, const infrastructure_msgs::UInt8_srv::Response& res){
   set_friction(req.data);
   res.data = true;
@@ -61,12 +64,13 @@ void start_drawer_callback(const infrastructure_msgs::UInt8_srv::Request& req, c
 
 void setup() {
   Serial.begin(57600);
+  //Setup ros pubs and services
   n.initNode();
   n.advertiseService("reset_drawer", reset_drawer_callback);
   n.advertiseService("start_drawer", start_door_callback);
   n.advertise(datapub);
+  
   //don't run drawer if TOF is not working.
-  //TODO: send error message to ROS here
   uint8_t connection_counter = 0;
   if (!tof.begin()) {
     while (1){
@@ -77,13 +81,16 @@ void setup() {
       delay(5000);
     }
   }
+  
+  //configure the max speed for the motors
+  friction_motor.setMaxSpeed(20000);
+  reset_motor.setMaxSpeed(20000);
 
+  //setup the used arduino pins
   pinMode(pulse_reset, OUTPUT);
   pinMode(direction_reset, OUTPUT);
   pinMode(pulse_friction, OUTPUT);
   pinMode(direction_friction, OUTPUT);
-  friction_motor.setMaxSpeed(20000);
-  reset_motor.setMaxSpeed(20000);
 
   pinMode(fsr_1, INPUT);
   pinMode(fsr_2, INPUT);
@@ -98,9 +105,10 @@ void setup() {
   pinMode(fsr_11, INPUT);
   pinMode(fsr_12, INPUT);
 
+  // initialize starting pos of drawer. Assumes drawer is closed.
   VL53L0X_RangingMeasurementData_t measure; //value from tof sensor
   tof.rangingTest(&measure, false);
-  start_pos = measure.RangeMilliMeter; // initialize starting pos of drawer. Assumes drawer is closed.
+  start_pos = measure.RangeMilliMeter; 
 }
 
 void loop() {
@@ -108,14 +116,14 @@ void loop() {
   n.spinOnce();
   reset_friction();
   
-
   delay(20);
 }
 
-void reset_drawer(VL53L0X_RangingMeasurementData_t &measure) {
+void reset_drawer() {
   reset_friction() //turn off friction
   reset_motor.setSpeed(-5000); //set speed to negative value to change direction
   bool did_move = false;
+  VL53L0X_RangingMeasurementData_t measure; //value from tof sensor
   while (true) {
     tof.rangingTest(&measure, false);
     if (measure.RangeMilliMeter < (start_pos + buffer_val)) {
@@ -128,6 +136,7 @@ void reset_drawer(VL53L0X_RangingMeasurementData_t &measure) {
       n.spinOnce();
       reset_motor.runSpeed();
       time = millis();
+      delay(10);
     }
   }
   if (did_move) { //if drawer did not move at all (or did not need to be reeled in), don't unwind
@@ -137,7 +146,7 @@ void reset_drawer(VL53L0X_RangingMeasurementData_t &measure) {
     while (time < time_stop) { //unwinds motor so string has slack
       n.spinOnce();
       reset_motor.runSpeed();
-      time = millis();
+      delay(10);
     }
   }
 }
@@ -146,20 +155,20 @@ void set_friction(float resistance) {
   float steps = ((resistance - base_friction) / fric_steps) + min_steps;
   friction_motor.setSpeed(5000);
   friction_motor.moveTo(steps);
-  friction_motor.setSpeed(5000);
   do {
     friction_motor.runSpeed();
     n.spinOnce();
+    delay(10);
   } while (friction_motor.currentPosition() < friction_motor.targetPosition());
 }
 
 void reset_friction() {
   friction_motor.setSpeed(-5000);
   friction_motor.moveTo(0);
-  friction_motor.setSpeed(-5000);
   do {
     friction_motor.runSpeed();
     n.spinOnce();
+    delay(10);
   } while (friction_motor.currentPosition() > friction_motor.targetPosition());
 }
 
