@@ -2,8 +2,9 @@
 #include <AccelStepper.h>
 #include "Adafruit_VL53L0X.h" //TOF sensor library
 #include <ros.h>
-#include <std_msgs/Int32.h>
-#include <infrastructure_msgs/DoorSensors.h>
+#include <std_srvs/Empty.h>
+#include <infrastructure_msgs/Drawer.h>
+#include <infrastructure_msgs/UInt8.h>
 
 //reset motor pins
 #define pulse_reset 3
@@ -27,6 +28,8 @@
 #define fsr_11 A10
 #define fsr_12 A11
 
+#define NUM_OF_FSRS 12
+
 //Init the stepper motors
 AccelStepper reset_motor(1, pulse_reset, direction_reset);
 AccelStepper friction_motor(1, pulse_friction, direction_friction);
@@ -39,8 +42,6 @@ const int buffer_val = 5; //buffer value for tof sensor for calculating distance
 const float fric_steps = .00032; //constant that represents relation between friction setting to motor steps
 const float base_friction = .3; //min resistance that drawer has
 const int min_steps = 2500; //min steps it takes to get brake to touch drawer fin
-float force_input; //input from user to set resistance rating
-//char junk = ' ';
 
 const int time_unwind = 4000; //in ms
 unsigned long time;
@@ -49,25 +50,27 @@ unsigned long time_stop;
 //ros variables
 ros::NodeHandle n;
 infrastructure_msgs::Drawer data;
-ros::Publisher datapub("door_data", &data);
+ros::Publisher datapub("drawer_data", &data);
 
 //ros callback functions for start_drawer and reset_drawer services
-void reset_drawer_callback(const std_msgs::Int32& req){
+void reset_drawer_callback(const std_srvs::Empty::Request& req, std_srvs::Empty::Response& res){
   reset_drawer();
-  res.data = true;
 }
 
-void start_drawer_callback(const infrastructure_msgs::UInt8_srv::Request& req, const infrastructure_msgs::UInt8_srv::Response& res){
-  set_friction(req.data);
-  res.data = true;
+void start_drawer_callback(const infrastructure_msgs::UInt8::Request& req, infrastructure_msgs::UInt8::Response& res){
+  set_friction(req.resistance);
 }
 
 void setup() {
   Serial.begin(57600);
   //Setup ros pubs and services
   n.initNode();
-  n.advertiseService("reset_drawer", reset_drawer_callback);
-  n.advertiseService("start_drawer", start_door_callback);
+  
+  ros::ServiceServer<std_srvs::Empty::Request, std_srvs::Empty::Response> reset_drawer_server("reset_drawer",&reset_drawer_callback);
+  ros::ServiceServer<infrastructure_msgs::UInt8::Request, infrastructure_msgs::UInt8::Response> start_drawer_server("start_drawer",&start_drawer_callback);
+  n.advertiseService(reset_drawer_server);
+  n.advertiseService(start_drawer_server);
+  
   n.advertise(datapub);
   
   //don't run drawer if TOF is not working.
@@ -75,12 +78,16 @@ void setup() {
   if (!tof.begin()) {
     while (1){
       if(connection_counter >= 3)
-        ROS_ERROR("Unable to initialize ToF sensor");
+        n.logerror("Unable to initialize ToF sensor");
       
       connection_counter++;
       delay(5000);
     }
   }
+
+  //Initialize space in drawer msg
+  data.fsr_readings = (short unsigned int *)malloc(sizeof(uint8_t) * NUM_OF_FSRS);
+  data.fsr_readings_length = NUM_OF_FSRS;
   
   //configure the max speed for the motors
   friction_motor.setMaxSpeed(20000);
@@ -114,13 +121,12 @@ void setup() {
 void loop() {
   collect_data();
   n.spinOnce();
-  reset_friction();
   
   delay(20);
 }
 
 void reset_drawer() {
-  reset_friction() //turn off friction
+  reset_friction(); //turn off friction
   reset_motor.setSpeed(-5000); //set speed to negative value to change direction
   bool did_move = false;
   VL53L0X_RangingMeasurementData_t measure; //value from tof sensor
@@ -173,46 +179,22 @@ void reset_friction() {
 }
 
 void read_handle_val() {
-  /*data_point.data = analogRead(fsr_1);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_2);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_3);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_4);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_5);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_6);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_7);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_8);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_9);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_10);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_11);
-  datapub.publish(&data_point);
-  data_point.data = analogRead(fsr_12);
-  datapub.publish(&data_point);*/
-  data.fsr1 = analogRead(fsr_1);
-  data.fsr2 = analogRead(fsr_2);
-  data.fsr3 = analogRead(fsr_3);
-  data.fsr4 = analogRead(fsr_4);
-  data.fsr5 = analogRead(fsr_5);
-  data.fsr6 = analogRead(fsr_6);
-  data.fsr7 = analogRead(fsr_7);
-  data.fsr8 = analogRead(fsr_8);
-  data.fsr9 = analogRead(fsr_9);
-  data.fsr10 = analogRead(fsr_10);
-  data.fsr11 = analogRead(fsr_11);
-  data.fsr12 = analogRead(fsr_12);
+  data.fsr_readings[0] = analogRead(fsr_1);
+  data.fsr_readings[1] = analogRead(fsr_2);
+  data.fsr_readings[2]= analogRead(fsr_3);
+  data.fsr_readings[3] = analogRead(fsr_4);
+  data.fsr_readings[4] = analogRead(fsr_5);
+  data.fsr_readings[5] = analogRead(fsr_6);
+  data.fsr_readings[6] = analogRead(fsr_7);
+  data.fsr_readings[7] = analogRead(fsr_8);
+  data.fsr_readings[8] = analogRead(fsr_9);
+  data.fsr_readings[9] = analogRead(fsr_10);
+  data.fsr_readings[10] = analogRead(fsr_11);
+  data.fsr_readings[11] = analogRead(fsr_12);
 }
 
 void read_TOF_val() {
-  VL53L0X_RangingMeasurementData_t measure; //value from tof sensor. pointer
+  VL53L0X_RangingMeasurementData_t measure;
   tof.rangingTest(&measure, false);
   int drawer_distance;
   if (measure.RangeMilliMeter <= start_pos) {
@@ -221,7 +203,7 @@ void read_TOF_val() {
   else {
    drawer_distance = measure.RangeMilliMeter - start_pos;
   }
-  data.tof = drawer_distance;
+  data.drawer_distance = drawer_distance;
   //data_point.data = drawer_distance;
   //datapub.publish(&data_point);
 }
@@ -229,6 +211,6 @@ void read_TOF_val() {
 void collect_data() {
   read_TOF_val();
   read_handle_val();
-  data.current_time = n.now(); //gets the time of the device roscore is running on
+  data.header.stamp = n.now(); //gets the time of the device roscore is running on
   datapub.publish(&data);
 }
