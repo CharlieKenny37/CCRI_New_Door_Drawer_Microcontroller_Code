@@ -2,9 +2,10 @@
 #include "math.h" 
 #include <AS5047P.h> //Library for the rotary encoder
 #include <ros.h>
-#include <std_srvs/Empty.h>
+#include <std_msgs/Empty.h>
+#include <std_msgs/UInt8.h>
+#include <std_msgs/Bool.h>
 #include <infrastructure_msgs/Door.h>
-#include <infrastructure_msgs/UInt8.h>
 
 //define pins for motor controller
 #define enable_motor_channel 6 //pwm pin
@@ -12,7 +13,7 @@
 #define motor_channel4  42
 
 // define pins for electromagnet driver
-#define ELECTROMAGNET_PIN 20 //pwm pin
+#define ELECTROMAGNET_PIN 2 //pwm pin
 
 // Initialize FSRs in door frame
 #define fsr_13 A0
@@ -42,7 +43,6 @@ AS5047P encoder(ENCODER_CHIP_SELECT_PORT, ENCODER_SPI_BUS_SPEED);
 // Initialize user input variables
 unsigned long time;
 unsigned long stoptime;
-unsigned long start_time;
 
 //declare motor variable for time
 const int time_unwind = 2000; // in ms
@@ -50,30 +50,43 @@ const int time_unwind = 2000; // in ms
 //ros variables
 ros::NodeHandle n;
 infrastructure_msgs::Door data;
-ros::Publisher datapub("door_data", &data);
+std_msgs::Bool door_status;
+ros::Publisher datapub("Door/Data", &data);
+ros::Publisher statuspub("Door/MovementStatus", &door_status, true);
 
 //ros callback functions for reset_door and start_door services
-void reset_door_callback(const std_srvs::Empty::Request& req, std_srvs::Empty::Response& res){
+void reset_door_callback(const std_msgs::Empty& msg)
+{
+  door_status.data = true;
+  statuspub.publish(&door_status);
   Reset_Door();
+  door_status.data = false;
+  statuspub.publish(&door_status);
 }
 
-void start_door_callback(const infrastructure_msgs::UInt8::Request& req, infrastructure_msgs::UInt8::Response& res){
-  Set_Electromagnets(req.resistance); // changes electromagnets based on input
+void start_door_callback(const std_msgs::UInt8& msg)
+{
+  Set_Electromagnets(msg.data); //changes electromagnets based on the input of the message
 }
 
-void setup() {
-  Serial.begin(57600);
+
+ros::Subscriber<std_msgs::UInt8> start_sub("Door/Start_Door", &start_door_callback);
+ros::Subscriber<std_msgs::Empty> reset_sub("Door/Reset_Door", &reset_door_callback);
+
+
+void setup()
+{
+  //Start up all of the ROS stuff
   n.initNode();
-  ros::ServiceServer<std_srvs::Empty::Request, std_srvs::Empty::Response> reset_door_server("reset_door",&reset_door_callback);
-  ros::ServiceServer<infrastructure_msgs::UInt8::Request, infrastructure_msgs::UInt8::Response> start_door_server("start_door",&start_door_callback);
-  n.advertiseService(reset_door_server);
-  n.advertiseService(start_door_server);
+  n.subscribe(start_sub);
+  n.subscribe(start_sub);
   n.advertise(datapub);
-  //don't run door if encoder is not working.
-  //TODO: send error message to ROS here
+  n.advertise(statuspub);
+  
+  //Initialize the encoder.  Send an error message to ROS if the encoder is unable to be initialized
   uint8_t connection_counter = 0;
-  while (!encoder.initSPI()) {
-    Serial.println(F("Can't connect to the AS5047P sensor! Please check the connection..."));
+  while (!encoder.initSPI())
+  {
     if(connection_counter >=3)
       n.logerror("Unable to connect to the encoder");
 
@@ -81,9 +94,16 @@ void setup() {
     delay(5000);
   }
 
-  //Initialize space in door msg
+  //Initialize the door status pub
+  door_status.data = false;
+  statuspub.publish(&door_status);
+
+  //Initialize memory space in door msg
   data.fsr_readings = (short unsigned int *)malloc(sizeof(uint8_t) * NUM_OF_FSRS);
   data.fsr_readings_length = NUM_OF_FSRS;
+
+  //Initialize the electromagnets as being off
+  Set_Electromagnets(0);
   
   // initialize motor pins as outputs
   pinMode(motor_channel3, OUTPUT);
@@ -108,15 +128,23 @@ void setup() {
   pinMode(fsr_14, INPUT);
 }
 
-void loop() {
-  start_time = millis();
+void loop()
+{
   collect_data();
+
+  //Turn off the electromagnets if the door has exceeded a certain angle since the electromagnets have no effect once the door has swung out enough
+  if(data.door_angle > 20)
+  {
+    Set_Electromagnets(0);
+  }
+  
   n.spinOnce();
 
-  delay(20); //Runs loop at reasonable rate
+  delay(100); //Runs loop at reasonable rate
 }
 
-void Reset_Door() {
+void Reset_Door()
+{
   bool did_move = false;
   int motor_speed = 100; //max speed for the motor
 
@@ -126,14 +154,16 @@ void Reset_Door() {
   digitalWrite(motor_channel3, LOW);// turns motor
   digitalWrite(motor_channel4, HIGH); // counter clockwise
   
-  while (true) { // door is open more than 1 degree
+  while (true)
+  { // door is open more than 1 degree
     n.spinOnce();
     if (encoder.readAngleDegree() < 2) {
       break;
     }
     did_move = true;
   }
-  if (did_move) {
+  if (did_move)
+  {
     time = millis();
     unsigned long time_stop = time + time_unwind;
     digitalWrite(motor_channel3, HIGH); // turns motor
@@ -142,8 +172,8 @@ void Reset_Door() {
       n.spinOnce();
       time=millis();
       //testing purposes only
-      /*data_point.data = -5;
-      datapub.publish(&data_point);*/
+      //data_point.data = -5;
+      //datapub.publish(&data_point);
     }
   }
   analogWrite(enable_motor_channel, 0); // turns motor off
@@ -154,7 +184,8 @@ void Set_Electromagnets(uint8_t electromagnet_power)
   analogWrite(ELECTROMAGNET_PIN, electromagnet_power);
 }
 
-void read_handle_val() {
+void read_handle_val()
+{
   data.fsr_readings[2] = analogRead(fsr_1);
   data.fsr_readings[3] = analogRead(fsr_2);
   data.fsr_readings[4] = analogRead(fsr_3);
@@ -169,16 +200,19 @@ void read_handle_val() {
   data.fsr_readings[13] = analogRead(fsr_12);
 }
 
-void read_encoder_val() {
+void read_encoder_val()
+{
   data.door_angle = encoder.readAngleDegree();
 }
 
-void read_pull_force() {
+void read_pull_force()
+{
   data.fsr_readings[0] = analogRead(fsr_13);
   data.fsr_readings[1] = analogRead(fsr_14);
 }
 
-void collect_data(){
+void collect_data()
+{
     read_encoder_val();
     read_handle_val();
     read_pull_force();

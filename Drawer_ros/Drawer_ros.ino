@@ -2,9 +2,10 @@
 #include <AccelStepper.h>
 #include "Adafruit_VL53L0X.h" //TOF sensor library
 #include <ros.h>
-#include <std_srvs/Empty.h>
+#include <std_msgs/Empty.h>
+#include <std_msgs/UInt8.h>
+#include <std_msgs/Bool.h>
 #include <infrastructure_msgs/Drawer.h>
-#include <infrastructure_msgs/UInt8.h>
 
 //reset motor pins
 #define pulse_reset 3
@@ -50,28 +51,37 @@ unsigned long time_stop;
 //ros variables
 ros::NodeHandle n;
 infrastructure_msgs::Drawer data;
-ros::Publisher datapub("drawer_data", &data);
+std_msgs::Bool drawer_status;
+ros::Publisher datapub("Drawer/Data", &data);
+ros::Publisher statuspub("Drawer/MovementStatus", &drawer_status);
+
 
 //ros callback functions for start_drawer and reset_drawer services
-void reset_drawer_callback(const std_srvs::Empty::Request& req, std_srvs::Empty::Response& res){
+void reset_drawer_callback(const std_msgs::Empty& msg)
+{
+  drawer_status.data = true;
+  statuspub.publish(&drawer_status);
   reset_drawer();
+  drawer_status.data = false;
+  statuspub.publish(&drawer_status);
 }
 
-void start_drawer_callback(const infrastructure_msgs::UInt8::Request& req, infrastructure_msgs::UInt8::Response& res){
-  set_friction(req.resistance);
+void start_drawer_callback(const std_msgs::UInt8& msg)
+{
+  set_friction(msg.data);
 }
 
-void setup() {
-  Serial.begin(57600);
+ros::Subscriber<std_msgs::Empty> resetsub("Drawer/Reset_Drawer", &reset_drawer_callback);
+ros::Subscriber<std_msgs::UInt8> startsub("Drawer/Start_Drawer", &start_drawer_callback);
+
+void setup()
+{
   //Setup ros pubs and services
   n.initNode();
-  
-  ros::ServiceServer<std_srvs::Empty::Request, std_srvs::Empty::Response> reset_drawer_server("reset_drawer",&reset_drawer_callback);
-  ros::ServiceServer<infrastructure_msgs::UInt8::Request, infrastructure_msgs::UInt8::Response> start_drawer_server("start_drawer",&start_drawer_callback);
-  n.advertiseService(reset_drawer_server);
-  n.advertiseService(start_drawer_server);
-  
   n.advertise(datapub);
+  n.advertise(statuspub);
+  n.subscribe(resetsub);
+  n.subscribe(startsub);
   
   //don't run drawer if TOF is not working.
   uint8_t connection_counter = 0;
@@ -118,27 +128,32 @@ void setup() {
   start_pos = measure.RangeMilliMeter; 
 }
 
-void loop() {
+void loop()
+{
   collect_data();
   n.spinOnce();
   
-  delay(20);
+  delay(100); //Run the loop at a reasonable rate
 }
 
-void reset_drawer() {
+void reset_drawer()
+{
   reset_friction(); //turn off friction
   reset_motor.setSpeed(-5000); //set speed to negative value to change direction
   bool did_move = false;
   VL53L0X_RangingMeasurementData_t measure; //value from tof sensor
-  while (true) {
+  while (true)
+  {
     tof.rangingTest(&measure, false);
-    if (measure.RangeMilliMeter < (start_pos + buffer_val)) {
+    if (measure.RangeMilliMeter < (start_pos + buffer_val))
+    {
       break;
     }
     did_move = true;
     time = millis();
     time_stop = time + 100; //runs motor for 100ms before checking if drawer is closed
-    while (time < time_stop) {
+    while (time < time_stop)
+    {
       n.spinOnce();
       reset_motor.runSpeed();
       time = millis();
@@ -157,7 +172,8 @@ void reset_drawer() {
   }
 }
 
-void set_friction(float resistance) {
+void set_friction(float resistance)
+{
   float steps = ((resistance - base_friction) / fric_steps) + min_steps;
   friction_motor.setSpeed(5000);
   friction_motor.moveTo(steps);
@@ -193,14 +209,17 @@ void read_handle_val() {
   data.fsr_readings[11] = analogRead(fsr_12);
 }
 
-void read_TOF_val() {
+void read_TOF_val()
+{
   VL53L0X_RangingMeasurementData_t measure;
   tof.rangingTest(&measure, false);
   int drawer_distance;
-  if (measure.RangeMilliMeter <= start_pos) {
+  if (measure.RangeMilliMeter <= start_pos)
+  {
     drawer_distance = 0;
-   }
-  else {
+  }
+  else
+  {
    drawer_distance = measure.RangeMilliMeter - start_pos;
   }
   data.drawer_distance = drawer_distance;
