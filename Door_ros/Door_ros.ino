@@ -8,33 +8,33 @@
 #include <infrastructure_msgs/Door.h>
 
 //define pins for motor controller
-#define enable_motor_channel 6 //pwm pin
-#define motor_channel3  48
-#define motor_channel4  42
+#define enable_motor_channel 44 //pwm pin
+#define motor_channel3  42
+#define motor_channel4  43
 
 // define pins for electromagnet driver
 #define ELECTROMAGNET_PIN 2 //pwm pin
 
 // Initialize FSRs in door frame
-#define fsr_13 A0
-#define fsr_14 A3
-#define fsr_1 A7
-#define fsr_2 A15
-#define fsr_3 A10
-#define fsr_4 A4
-#define fsr_5 A12
-#define fsr_6 A6
-#define fsr_7 A5
-#define fsr_8 A13
+#define fsr_13 A12
+#define fsr_14 A13
+#define fsr_1 A0
+#define fsr_2 A1
+#define fsr_3 A2
+#define fsr_4 A3
+#define fsr_5 A4
+#define fsr_6 A5
+#define fsr_7 A6
+#define fsr_8 A7
 #define fsr_9 A8
-#define fsr_10 A14
-#define fsr_11 A9
+#define fsr_10 A9
+#define fsr_11 A10
 #define fsr_12 A11
 
 #define NUM_OF_FSRS 14
 
 
-#define ENCODER_CHIP_SELECT_PORT 5
+#define ENCODER_CHIP_SELECT_PORT 47
 #define ENCODER_SPI_BUS_SPEED 100000
 
 // Initialize the encoder
@@ -44,8 +44,10 @@ AS5047P encoder(ENCODER_CHIP_SELECT_PORT, ENCODER_SPI_BUS_SPEED);
 unsigned long time;
 unsigned long stoptime;
 
+double init_angle;
+
 //declare motor variable for time
-const int time_unwind = 2000; // in ms
+const int time_unwind = 10000; // in ms
 
 //ros variables
 ros::NodeHandle n;
@@ -79,7 +81,7 @@ void setup()
   //Start up all of the ROS stuff
   n.initNode();
   n.subscribe(start_sub);
-  n.subscribe(start_sub);
+  n.subscribe(reset_sub);
   n.advertise(datapub);
   n.advertise(statuspub);
   
@@ -93,6 +95,8 @@ void setup()
     connection_counter++;
     delay(5000);
   }
+
+  init_angle = encoder.readAngleDegree();
 
   //Initialize the door status pub
   door_status.data = false;
@@ -157,7 +161,7 @@ void Reset_Door()
   while (true)
   { // door is open more than 1 degree
     n.spinOnce();
-    if (encoder.readAngleDegree() < 2) {
+    if (encoder.readAngleDegree() - init_angle < 2  && encoder.readAngleDegree() - init_angle > -2) {
       break;
     }
     did_move = true;
@@ -202,7 +206,7 @@ void read_handle_val()
 
 void read_encoder_val()
 {
-  data.door_angle = encoder.readAngleDegree();
+  data.door_angle = encoder.readAngleDegree() - init_angle;
 }
 
 void read_pull_force()
