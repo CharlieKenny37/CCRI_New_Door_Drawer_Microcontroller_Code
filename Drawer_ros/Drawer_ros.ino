@@ -8,16 +8,18 @@
 #include <infrastructure_msgs/Drawer.h>
 
 //reset motor pins
-#define pulse_reset 3
-#define direction_reset 2
+#define pulse_reset 8
+#define direction_reset 7
+#define enable_reset 6
 
 //friction motor pins
-#define pulse_friction 9
-#define direction_friction 8
+#define pulse_friction 13
+#define direction_friction 12
+#define enable_friction 11
 
 //FSR402 data pins (from handle)
 #define fsr_1 A0
-#define fsr_2 A1
+// #define fsr_2 A1
 #define fsr_3 A2
 #define fsr_4 A3
 #define fsr_5 A4
@@ -32,8 +34,8 @@
 #define NUM_OF_FSRS 12
 
 //Init the stepper motors
-AccelStepper reset_motor(1, pulse_reset, direction_reset);
-AccelStepper friction_motor(1, pulse_friction, direction_friction);
+AccelStepper reset_motor( AccelStepper::DRIVER, pulse_reset, direction_reset);
+AccelStepper friction_motor( AccelStepper::DRIVER, pulse_friction, direction_friction);
 
 //Init tof sensor
 Adafruit_VL53L0X tof = Adafruit_VL53L0X();
@@ -103,6 +105,10 @@ void setup()
   friction_motor.setMaxSpeed(20000);
   reset_motor.setMaxSpeed(20000);
 
+  //setup the enable pins on the motors
+  reset_motor.setEnablePin(enable_reset);
+  friction_motor.setEnablePin(enable_friction);
+  
   //setup the used arduino pins
   pinMode(pulse_reset, OUTPUT);
   pinMode(direction_reset, OUTPUT);
@@ -110,7 +116,7 @@ void setup()
   pinMode(direction_friction, OUTPUT);
 
   pinMode(fsr_1, INPUT);
-  pinMode(fsr_2, INPUT);
+ // pinMode(fsr_2, INPUT);
   pinMode(fsr_3, INPUT);
   pinMode(fsr_4, INPUT);
   pinMode(fsr_5, INPUT);
@@ -138,10 +144,12 @@ void loop()
 
 void reset_drawer()
 {
+  n.loginfo("Starting drawer reset");
   reset_friction(); //turn off friction
-  reset_motor.setSpeed(-5000); //set speed to negative value to change direction
+  reset_motor.setSpeed(-20000); //set speed to negative value to change direction
   bool did_move = false;
   VL53L0X_RangingMeasurementData_t measure; //value from tof sensor
+  n.loginfo("Starting drawer pullback");
   while (true)
   {
     tof.rangingTest(&measure, false);
@@ -160,22 +168,25 @@ void reset_drawer()
       delay(10);
     }
   }
+  n.loginfo("Starting drawer unwind");
   if (did_move) { //if drawer did not move at all (or did not need to be reeled in), don't unwind
     time = millis();
     time_stop = time + time_unwind;
-    reset_motor.setSpeed(5000);
+    reset_motor.setSpeed(20000);
     while (time < time_stop) { //unwinds motor so string has slack
       n.spinOnce();
       reset_motor.runSpeed();
+      time = millis();
       delay(10);
     }
   }
+  n.loginfo("Finished drawer reset");
 }
 
 void set_friction(float resistance)
 {
   float steps = ((resistance - base_friction) / fric_steps) + min_steps;
-  friction_motor.setSpeed(5000);
+  friction_motor.setSpeed(20000);
   friction_motor.moveTo(steps);
   do {
     friction_motor.runSpeed();
@@ -185,18 +196,20 @@ void set_friction(float resistance)
 }
 
 void reset_friction() {
-  friction_motor.setSpeed(-5000);
+  n.loginfo("Starting friction reset");
+  friction_motor.setSpeed(-20000);
   friction_motor.moveTo(0);
   do {
     friction_motor.runSpeed();
     n.spinOnce();
     delay(10);
   } while (friction_motor.currentPosition() > friction_motor.targetPosition());
+  n.loginfo("Finished friction reset");
 }
 
 void read_handle_val() {
   data.fsr_readings[0] = analogRead(fsr_1);
-  data.fsr_readings[1] = analogRead(fsr_2);
+//  data.fsr_readings[1] = analogRead(fsr_2);
   data.fsr_readings[2]= analogRead(fsr_3);
   data.fsr_readings[3] = analogRead(fsr_4);
   data.fsr_readings[4] = analogRead(fsr_5);
