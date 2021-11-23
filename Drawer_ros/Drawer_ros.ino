@@ -33,6 +33,9 @@
 
 #define NUM_OF_FSRS 12
 
+//Determines loop rate if desired
+#define LOOP_RATE_HZ 100
+
 //Init the stepper motors
 AccelStepper reset_motor( AccelStepper::DRIVER, pulse_reset, direction_reset);
 AccelStepper friction_motor( AccelStepper::DRIVER, pulse_friction, direction_friction);
@@ -84,6 +87,9 @@ void setup()
   n.advertise(statuspub);
   n.subscribe(resetsub);
   n.subscribe(startsub);
+
+  //Set the baud rate of the serial port
+  n.getHardware()->setBaud(250000);
   
   //don't run drawer if TOF is not working.
   uint8_t connection_counter = 0;
@@ -129,17 +135,20 @@ void setup()
   pinMode(fsr_12, INPUT);
 
   // initialize starting pos of drawer. Assumes drawer is closed.
-  VL53L0X_RangingMeasurementData_t measure; //value from tof sensor
-  tof.rangingTest(&measure, false);
-  start_pos = measure.RangeMilliMeter; 
+  start_pos = tof.readRange(); 
 }
 
 void loop()
 {
+  //Publishes sensor data and runs callbacks if needed
   collect_data();
   n.spinOnce();
   
-  delay(100); //Run the loop at a reasonable rate
+  //Loop rate control
+  //uncomment if desired
+  /* int loop_end_time = millis() + (1/LOOP_RATE_HZ) * 1000;
+  while(millis() < loop_end_time); */
+
 }
 
 void reset_drawer()
@@ -148,36 +157,39 @@ void reset_drawer()
   reset_friction(); //turn off friction
   reset_motor.setSpeed(-20000); //set speed to negative value to change direction
   bool did_move = false;
-  VL53L0X_RangingMeasurementData_t measure; //value from tof sensor
   n.loginfo("Starting drawer pullback");
   while (true)
   {
-    tof.rangingTest(&measure, false);
-    if (measure.RangeMilliMeter < (start_pos + buffer_val))
+    int drawer_distance_measurement = tof.readRange() - start_pos;
+    if (drawer_distance_measurement < buffer_val)
     {
       break;
     }
+    //If loop passes the if statement on the first iteration, the motor will move so set did_move to true
     did_move = true;
-    time = millis();
-    time_stop = time + 100; //runs motor for 100ms before checking if drawer is closed
-    while (time < time_stop)
-    {
-      n.spinOnce();
-      reset_motor.runSpeed();
-      time = millis();
-      delay(10);
+    //Run the motor
+    reset_motor.runSpeed();
+
+    //Make sure that main loop keeps updating while in this while loop
+    loop();
+
     }
   }
+
   n.loginfo("Starting drawer unwind");
   if (did_move) { //if drawer did not move at all (or did not need to be reeled in), don't unwind
     time = millis();
     time_stop = time + time_unwind;
     reset_motor.setSpeed(20000);
     while (time < time_stop) { //unwinds motor so string has slack
-      n.spinOnce();
+      //Run the motor
       reset_motor.runSpeed();
+
+      //Update the main loop while stuck in this while loop
+      loop();
+
+      //Update the current time 
       time = millis();
-      delay(10);
     }
   }
   n.loginfo("Finished drawer reset");
@@ -189,9 +201,11 @@ void set_friction(float resistance)
   friction_motor.setSpeed(20000);
   friction_motor.moveTo(steps);
   do {
+    //Run the motor
     friction_motor.runSpeed();
-    n.spinOnce();
-    delay(10);
+    
+    //Update the main loop while in this do while loop
+    loop();
   } while (friction_motor.currentPosition() < friction_motor.targetPosition());
 }
 
@@ -200,9 +214,11 @@ void reset_friction() {
   friction_motor.setSpeed(-20000);
   friction_motor.moveTo(0);
   do {
+    //Run the motor
     friction_motor.runSpeed();
-    n.spinOnce();
-    delay(10);
+    
+    //Update the main loop while in this do while loop
+    loop();
   } while (friction_motor.currentPosition() > friction_motor.targetPosition());
   n.loginfo("Finished friction reset");
 }
@@ -224,18 +240,11 @@ void read_handle_val() {
 
 void read_TOF_val()
 {
-  VL53L0X_RangingMeasurementData_t measure;
-  tof.rangingTest(&measure, false);
-  int drawer_distance;
-  if (measure.RangeMilliMeter <= start_pos)
+  data.drawer_distance = tof.readRange() - start_pos;
+  if (data.drawer_distance < 0)
   {
-    drawer_distance = 0;
+    data.drawer_distance = 0;
   }
-  else
-  {
-   drawer_distance = measure.RangeMilliMeter - start_pos;
-  }
-  data.drawer_distance = drawer_distance;
   //data_point.data = drawer_distance;
   //datapub.publish(&data_point);
 }

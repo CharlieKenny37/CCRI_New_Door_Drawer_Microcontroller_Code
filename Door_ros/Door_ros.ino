@@ -33,9 +33,12 @@
 
 #define NUM_OF_FSRS 14
 
-
+// Initialize SPI bus with the encoder attached to it
 #define ENCODER_CHIP_SELECT_PORT 47
-#define ENCODER_SPI_BUS_SPEED 100000
+#define ENCODER_SPI_BUS_SPEED 15000000
+
+//Specifies main loop rate if desired
+#define LOOP_RATE_HZ 100
 
 // Initialize the encoder
 AS5047P encoder(ENCODER_CHIP_SELECT_PORT, ENCODER_SPI_BUS_SPEED);
@@ -44,24 +47,33 @@ AS5047P encoder(ENCODER_CHIP_SELECT_PORT, ENCODER_SPI_BUS_SPEED);
 unsigned long time;
 unsigned long stoptime;
 
+// Stores the inital angle reading for performing differential angle measurements
 double init_angle;
 
-//declare motor variable for time
+// Time for door reset motor to unwind after pulling the door back to its initial position.  This is done so that the reset string is not taught
+// when opening the door
 const int time_unwind = 10000; // in ms
 
 //ros variables
+
 ros::NodeHandle n;
+//stores the encoder and fsr measurements
 infrastructure_msgs::Door data;
+//boolean variable for indicating when the door is in the middle of performing a reset
 std_msgs::Bool door_status;
+
+//data publishers
 ros::Publisher datapub("Door/Data", &data);
 ros::Publisher statuspub("Door/MovementStatus", &door_status, true);
 
 //ros callback functions for reset_door and start_door services
 void reset_door_callback(const std_msgs::Empty& msg)
 {
+  // Indicate that the door is moving
   door_status.data = true;
   statuspub.publish(&door_status);
   Reset_Door();
+  // Once finished, indicate that the door has finished moving
   door_status.data = false;
   statuspub.publish(&door_status);
 }
@@ -71,7 +83,7 @@ void start_door_callback(const std_msgs::UInt8& msg)
   Set_Electromagnets(msg.data); //changes electromagnets based on the input of the message
 }
 
-
+// Subscribers
 ros::Subscriber<std_msgs::UInt8> start_sub("Door/Start_Door", &start_door_callback);
 ros::Subscriber<std_msgs::Empty> reset_sub("Door/Reset_Door", &reset_door_callback);
 
@@ -84,6 +96,9 @@ void setup()
   n.subscribe(reset_sub);
   n.advertise(datapub);
   n.advertise(statuspub);
+
+  //Set the baud rate of the serial port
+  n.getHardware()->setBaud(250000);
   
   //Initialize the encoder.  Send an error message to ROS if the encoder is unable to be initialized
   uint8_t connection_counter = 0;
@@ -96,6 +111,7 @@ void setup()
     delay(5000);
   }
 
+  //Get initial angle reading
   init_angle = encoder.readAngleDegree();
 
   //Initialize the door status pub
@@ -134,17 +150,21 @@ void setup()
 
 void loop()
 {
+  //Publishes the current senor data and runs callbacks if needed
   collect_data();
+  n.spinOnce();
 
   //Turn off the electromagnets if the door has exceeded a certain angle since the electromagnets have no effect once the door has swung out enough
   if(data.door_angle > 20)
   {
     Set_Electromagnets(0);
   }
-  
-  n.spinOnce();
 
-  delay(100); //Runs loop at reasonable rate
+  //Loop rate control
+  //uncomment if desired
+  /* int loop_end_time = millis() + (1/LOOP_RATE_HZ) * 1000;
+  while(millis() < loop_end_time); */
+
 }
 
 void Reset_Door()
@@ -158,14 +178,17 @@ void Reset_Door()
   digitalWrite(motor_channel3, LOW);// turns motor
   digitalWrite(motor_channel4, HIGH); // counter clockwise
   
+  //Check when to stop moving
   while (true)
-  { // door is open more than 1 degree
-    n.spinOnce();
+  { 
+    loop(); //ensure that data is still being updated
+    
     if (encoder.readAngleDegree() - init_angle < 2  && encoder.readAngleDegree() - init_angle > -2) {
       break;
     }
     did_move = true;
   }
+  //unwind the motor if the motor moved at all
   if (did_move)
   {
     time = millis();
@@ -173,13 +196,15 @@ void Reset_Door()
     digitalWrite(motor_channel3, HIGH); // turns motor
     digitalWrite(motor_channel4, LOW);// clockwise
     while(time < (time_stop)){
-      n.spinOnce();
+      loop(); //ensure that data is still being updated
+      
       time=millis();
       //testing purposes only
       //data_point.data = -5;
       //datapub.publish(&data_point);
     }
   }
+  //turn off motor
   analogWrite(enable_motor_channel, 0); // turns motor off
 }
 
