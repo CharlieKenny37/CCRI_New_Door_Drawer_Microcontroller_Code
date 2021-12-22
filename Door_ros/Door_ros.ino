@@ -52,7 +52,7 @@ double init_angle;
 
 // Time for door reset motor to unwind after pulling the door back to its initial position.  This is done so that the reset string is not taught
 // when opening the door
-const int time_unwind = 10000; // in ms
+const int time_unwind = 8000; // in ms
 
 //ros variables
 
@@ -64,7 +64,7 @@ std_msgs::Bool door_status;
 
 //data publishers
 ros::Publisher datapub("Door/Data", &data);
-ros::Publisher statuspub("Door/MovementStatus", &door_status, true);
+ros::Publisher statuspub("Door/MovementStatus", &door_status);
 
 //ros callback functions for reset_door and start_door services
 void reset_door_callback(const std_msgs::Empty& msg)
@@ -96,6 +96,9 @@ void setup()
   n.subscribe(reset_sub);
   n.advertise(datapub);
   n.advertise(statuspub);
+
+  n.negotiateTopics();
+
 
   //Set the baud rate of the serial port
   n.getHardware()->setBaud(250000);
@@ -146,6 +149,7 @@ void setup()
   pinMode(fsr_12, INPUT);
   pinMode(fsr_13, INPUT);
   pinMode(fsr_14, INPUT);
+
 }
 
 void loop()
@@ -190,7 +194,7 @@ void Reset_Door()
   }
   //unwind the motor if the motor moved at all
   if (did_move)
-  {
+  { 
     time = millis();
     unsigned long time_stop = time + time_unwind;
     digitalWrite(motor_channel3, HIGH); // turns motor

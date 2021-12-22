@@ -104,12 +104,12 @@ void setup()
   }
 
   //Initialize space in drawer msg
-  data.fsr_readings = (short unsigned int *)malloc(sizeof(uint8_t) * NUM_OF_FSRS);
+  data.fsr_readings = (unsigned int *)malloc(sizeof(uint8_t) * NUM_OF_FSRS);
   data.fsr_readings_length = NUM_OF_FSRS;
   
   //configure the max speed for the motors
-  friction_motor.setMaxSpeed(20000);
-  reset_motor.setMaxSpeed(20000);
+  friction_motor.setMaxSpeed(800);
+  reset_motor.setMaxSpeed(800);
 
   //setup the enable pins on the motors
   reset_motor.setEnablePin(enable_reset);
@@ -135,7 +135,7 @@ void setup()
   pinMode(fsr_12, INPUT);
 
   // initialize starting pos of drawer. Assumes drawer is closed.
-  start_pos = tof.readRange(); 
+  start_pos = get_current_drawer_position();
 }
 
 void loop()
@@ -155,13 +155,13 @@ void reset_drawer()
 {
   n.loginfo("Starting drawer reset");
   reset_friction(); //turn off friction
-  reset_motor.setSpeed(-20000); //set speed to negative value to change direction
+  reset_motor.setSpeed(-800); //set speed to negative value to change direction
   bool did_move = false;
   n.loginfo("Starting drawer pullback");
+  int counter = 0;
   while (true)
   {
-    int drawer_distance_measurement = tof.readRange() - start_pos;
-    if (drawer_distance_measurement < buffer_val)
+    if (get_current_drawer_position() < buffer_val)
     {
       break;
     }
@@ -170,23 +170,33 @@ void reset_drawer()
     //Run the motor
     reset_motor.runSpeed();
 
-    //Make sure that main loop keeps updating while in this while loop
-    loop();
-
+    if(counter > 1000)
+    {
+      //Make sure that main loop keeps updating while in this while loop
+      loop();
+      counter = 0;
     }
+
+    counter++;
   }
 
   n.loginfo("Starting drawer unwind");
   if (did_move) { //if drawer did not move at all (or did not need to be reeled in), don't unwind
     time = millis();
     time_stop = time + time_unwind;
-    reset_motor.setSpeed(20000);
+    reset_motor.setSpeed(800);
     while (time < time_stop) { //unwinds motor so string has slack
       //Run the motor
       reset_motor.runSpeed();
 
-      //Update the main loop while stuck in this while loop
-      loop();
+      if(counter > 1000)
+      {
+        //Make sure that main loop keeps updating while in this while loop
+        loop();
+        counter = 0;
+      }
+
+      counter++;
 
       //Update the current time 
       time = millis();
@@ -198,32 +208,48 @@ void reset_drawer()
 void set_friction(float resistance)
 {
   float steps = ((resistance - base_friction) / fric_steps) + min_steps;
-  friction_motor.setSpeed(20000);
+  friction_motor.setSpeed(800);
   friction_motor.moveTo(steps);
+  int counter = 0;
   do {
     //Run the motor
     friction_motor.runSpeed();
     
-    //Update the main loop while in this do while loop
-    loop();
+    if(counter > 1000)
+    {
+      //Make sure that main loop keeps updating while in this while loop
+      loop();
+      counter = 0;
+    }
+
+    counter++;
+    
   } while (friction_motor.currentPosition() < friction_motor.targetPosition());
 }
 
 void reset_friction() {
   n.loginfo("Starting friction reset");
-  friction_motor.setSpeed(-20000);
+  friction_motor.setSpeed(-800);
   friction_motor.moveTo(0);
+  int counter = 0;
   do {
     //Run the motor
     friction_motor.runSpeed();
     
-    //Update the main loop while in this do while loop
-    loop();
+    if(counter > 1000)
+    {
+      //Make sure that main loop keeps updating while in this while loop
+      loop();
+      counter = 0;
+    }
+
+    counter++;
+    
   } while (friction_motor.currentPosition() > friction_motor.targetPosition());
   n.loginfo("Finished friction reset");
 }
 
-void read_handle_val() {
+void publish_handle_val() {
   data.fsr_readings[0] = analogRead(fsr_1);
 //  data.fsr_readings[1] = analogRead(fsr_2);
   data.fsr_readings[2]= analogRead(fsr_3);
@@ -238,20 +264,29 @@ void read_handle_val() {
   data.fsr_readings[11] = analogRead(fsr_12);
 }
 
-void read_TOF_val()
+void publish_TOF_val()
 {
-  data.drawer_distance = tof.readRange() - start_pos;
+  data.drawer_distance = get_current_drawer_position();
   if (data.drawer_distance < 0)
   {
     data.drawer_distance = 0;
   }
-  //data_point.data = drawer_distance;
-  //datapub.publish(&data_point);
+}
+
+int get_current_drawer_position()
+{
+  VL53L0X_RangingMeasurementData_t measure;
+  tof.rangingTest(&measure, false); // read the current distance measurement
+
+  if (measure.RangeStatus != 4) // phase failures have incorrect data
+    return measure.RangeMilliMeter - start_pos;
+  else
+    return get_current_drawer_position();
 }
 
 void collect_data() {
-  read_TOF_val();
-  read_handle_val();
+  publish_handle_val();
+  publish_TOF_val();
   data.header.stamp = n.now(); //gets the time of the device roscore is running on
   datapub.publish(&data);
 }
