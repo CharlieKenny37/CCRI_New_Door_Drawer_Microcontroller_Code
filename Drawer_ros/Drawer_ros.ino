@@ -7,6 +7,12 @@
 #include <std_msgs/Bool.h>
 #include <infrastructure_msgs/Drawer.h>
 
+#define USE_TIMER_1     true
+#define USE_TIMER_2     false
+#define USE_TIMER_3     false
+#define USE_TIMER_4     false
+#define USE_TIMER_5     false
+
 //reset motor pins
 #define pulse_reset 8
 #define direction_reset 7
@@ -59,6 +65,15 @@ infrastructure_msgs::Drawer data;
 std_msgs::Bool drawer_status;
 ros::Publisher datapub("Drawer/Data", &data);
 ros::Publisher statuspub("Drawer/MovementStatus", &drawer_status);
+
+// Timer ISR
+void TimerHandler()
+{
+  friction_motor.runSpeed();
+  reset_motor.runSpeed();
+}
+
+#define TIMER_INTERVAL_MS        25L
 
 
 //ros callback functions for start_drawer and reset_drawer services
@@ -136,6 +151,11 @@ void setup()
 
   // initialize starting pos of drawer. Assumes drawer is closed.
   start_pos = get_current_drawer_position();
+
+  // Init timer ITimer1
+  ITimer1.init();
+
+  ITimer1.attachInterruptInterval(TIMER_INTERVAL_MS, TimerHandler)
 }
 
 void loop()
@@ -186,8 +206,7 @@ void reset_drawer()
     time_stop = time + time_unwind;
     reset_motor.setSpeed(800);
     while (time < time_stop) { //unwinds motor so string has slack
-      //Run the motor
-      reset_motor.runSpeed();
+      //Run the motor in ISR
 
       if(counter > 1000)
       {
@@ -212,8 +231,7 @@ void set_friction(float resistance)
   friction_motor.moveTo(steps);
   int counter = 0;
   do {
-    //Run the motor
-    friction_motor.runSpeed();
+    //Run the motor in ISR
     
     if(counter > 1000)
     {
@@ -233,8 +251,7 @@ void reset_friction() {
   friction_motor.moveTo(0);
   int counter = 0;
   do {
-    //Run the motor
-    friction_motor.runSpeed();
+    //Run the motor in ISR
     
     if(counter > 1000)
     {
