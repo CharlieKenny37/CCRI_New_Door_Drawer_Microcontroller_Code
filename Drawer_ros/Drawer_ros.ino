@@ -1,6 +1,6 @@
 //necessary libraries
 #include <AccelStepper.h>
-#include "Adafruit_VL53L0X.h" //TOF sensor library
+#include <Adafruit_VL53L0X.h> //TOF sensor library
 #include <ros.h>
 #include <std_msgs/Empty.h>
 #include <std_msgs/UInt8.h>
@@ -12,6 +12,8 @@
 #define USE_TIMER_3     false
 #define USE_TIMER_4     false
 #define USE_TIMER_5     false
+
+#include "TimerInterrupt.h"
 
 //reset motor pins
 #define pulse_reset 8
@@ -73,7 +75,7 @@ void TimerHandler()
   reset_motor.runSpeed();
 }
 
-#define TIMER_INTERVAL_MS        25L
+#define TIMER_INTERVAL_MS        1L
 
 
 //ros callback functions for start_drawer and reset_drawer services
@@ -155,7 +157,7 @@ void setup()
   // Init timer ITimer1
   ITimer1.init();
 
-  ITimer1.attachInterruptInterval(TIMER_INTERVAL_MS, TimerHandler)
+  ITimer1.attachInterruptInterval(TIMER_INTERVAL_MS, TimerHandler);
 }
 
 void loop()
@@ -185,21 +187,18 @@ void reset_drawer()
     {
       break;
     }
+    
     //If loop passes the if statement on the first iteration, the motor will move so set did_move to true
     did_move = true;
-    //Run the motor
-    reset_motor.runSpeed();
 
-    if(counter > 1000)
-    {
-      //Make sure that main loop keeps updating while in this while loop
-      loop();
-      counter = 0;
-    }
+    //Run motor from ISR
 
-    counter++;
+    //Make sure that main loop keeps updating while in this while loop
+    loop();
+    
   }
-
+  reset_motor.setSpeed(0); //stop motor
+  
   n.loginfo("Starting drawer unwind");
   if (did_move) { //if drawer did not move at all (or did not need to be reeled in), don't unwind
     time = millis();
@@ -208,19 +207,14 @@ void reset_drawer()
     while (time < time_stop) { //unwinds motor so string has slack
       //Run the motor in ISR
 
-      if(counter > 1000)
-      {
-        //Make sure that main loop keeps updating while in this while loop
-        loop();
-        counter = 0;
-      }
-
-      counter++;
+      //Make sure that main loop keeps updating while in this while loop
+      loop();
 
       //Update the current time 
       time = millis();
     }
   }
+  reset_motor.setSpeed(0); //stop motor
   n.loginfo("Finished drawer reset");
 }
 
@@ -233,16 +227,11 @@ void set_friction(float resistance)
   do {
     //Run the motor in ISR
     
-    if(counter > 1000)
-    {
-      //Make sure that main loop keeps updating while in this while loop
-      loop();
-      counter = 0;
-    }
-
-    counter++;
+    //Make sure that main loop keeps updating while in this while loop
+    loop();
     
   } while (friction_motor.currentPosition() < friction_motor.targetPosition());
+  friction_motor.setSpeed(0); //Stop the motor once the motor is in position
 }
 
 void reset_friction() {
@@ -253,16 +242,11 @@ void reset_friction() {
   do {
     //Run the motor in ISR
     
-    if(counter > 1000)
-    {
-      //Make sure that main loop keeps updating while in this while loop
-      loop();
-      counter = 0;
-    }
-
-    counter++;
+    //Make sure that main loop keeps updating while in this while loop
+    loop();
     
   } while (friction_motor.currentPosition() > friction_motor.targetPosition());
+  friction_motor.setSpeed(0); //Stop the motor once the motor is in position
   n.loginfo("Finished friction reset");
 }
 
